@@ -1,0 +1,52 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from qiskit_dynamics import Solver, Signal
+
+I = np.eye(2, dtype=complex)
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
+
+def kron(a, b): return np.kron(a, b)
+exchange_op = 0.5 * (kron(X, X) + kron(Y, Y))
+
+solver = Solver(
+    static_hamiltonian=np.zeros((4, 4)),
+    hamiltonian_operators=[exchange_op]
+)
+
+J_strength = 2 * np.pi * 0.020 
+duration = (np.pi / 2) / J_strength 
+
+total_time = 40.0
+t_start = 10.0
+t_end = 10.0 + duration
+
+coupler_pulse = Signal(
+    envelope=lambda t: J_strength if (t_start <= t <= t_end) else 0.0,
+    carrier_freq=0.0
+)
+
+y0 = np.zeros((4, 4), dtype=complex)
+y0[1, 1] = 1.0 
+
+result = solver.solve(
+    t_span=[0, total_time],
+    y0=y0,
+    signals=[coupler_pulse],
+    method='RK23',
+    atol=1e-4, rtol=1e-4
+)
+
+times = result.t
+pop_01 = np.real(result.y[:, 1, 1])
+pop_10 = np.real(result.y[:, 2, 2])
+
+plt.figure(figsize=(10, 6))
+plt.plot(times, pop_01, label=r'$|01\rangle$', color='#0984e3', linewidth=3)
+plt.plot(times, pop_10, label=r'$|10\rangle$', color='#d63031', linewidth=3)
+plt.axvspan(t_start, t_end, color='gray', alpha=0.1, label='Coupler Active')
+plt.title("Mastery: iSWAP Population Transfer")
+plt.xlabel("Time (ns)")
+plt.ylabel("Population")
+plt.legend()
+plt.show()
