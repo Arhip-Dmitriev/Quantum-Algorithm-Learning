@@ -1,0 +1,66 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import warnings
+from qiskit_dynamics import Solver, Signal
+
+warnings.filterwarnings("ignore")
+
+freq = 5.0e9 #HARD
+anharm = -0.3e9 
+
+
+z_matrix = 2 * np.pi * np.array([
+    [0, 0, 0],
+    [0, freq, 0],
+    [0, 0, 2*freq + anharm]
+])
+
+x_matrix = 2 * np.pi * 0.02e9 * np.array([
+    [0, 1, 0],
+    [1, 0, np.sqrt(2)],
+    [0, np.sqrt(2), 0]
+])
+
+solver = Solver(
+    static_hamiltonian=z_matrix,
+    hamiltonian_operators=[x_matrix],
+    rotating_frame=z_matrix
+)
+
+betas = np.linspace(-2.0, 2.0, 40)
+leakage_results = []
+
+duration = 20e-9 
+t_span = [0, duration]
+
+for beta in betas:
+
+    def drag_envelope(t):
+
+        sigma = duration / 4
+        center = duration / 2
+        gauss = np.exp(-(t - center)**2 / (2 * sigma**2))
+
+        deriv = -(t - center) / (sigma**2) * gauss
+        return gauss + 1j * beta * deriv
+
+    sig = Signal(envelope=drag_envelope, carrier_freq=freq)
+    
+    result = solver.solve(
+        t_span=t_span,
+        y0=np.array([1, 0, 0], dtype=complex), 
+        signals=[sig]
+    )
+    
+
+    final_state = result.y[-1]
+    leakage = np.abs(final_state[2])**2
+    leakage_results.append(leakage)
+
+plt.figure(figsize=(8, 5))
+plt.plot(betas, leakage_results, color='#ff7675', linewidth=2)
+plt.title("DRAG Calibration: Minimizing Leakage to |2>")
+plt.xlabel("Beta Parameter (Correction Strength)")
+plt.ylabel("Population in 'Forbidden' |2> State")
+plt.grid(True)
+plt.show()
