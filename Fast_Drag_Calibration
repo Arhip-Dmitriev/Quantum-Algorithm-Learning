@@ -1,0 +1,34 @@
+import numpy as np
+import scipy.linalg as la
+import matplotlib.pyplot as plt
+
+freq_q = 5.0
+anharm = -0.3
+rabi_strength = 0.04 
+
+H_static = 2 * np.pi * np.diag([0, 0, anharm])
+X_op = 2 * np.pi * rabi_strength / 2.0 * np.array([[0, 1, 0], [1, 0, np.sqrt(2)], [0, np.sqrt(2), 0]])
+Y_op = 2 * np.pi * rabi_strength / 2.0 * np.array([[0, -1j, 0], [1j, 0, -np.sqrt(2)*1j], [0, np.sqrt(2)*1j, 0]])
+
+duration = 20.0 
+dt = 0.1         
+steps = int(duration / dt)
+times = np.linspace(0, duration, steps)
+sigma = duration / 4
+center = duration / 2
+
+gauss_env = np.exp(-(times - center)**2 / (2 * sigma**2))
+deriv_env = -(times - center) / (sigma**2) * gauss_env
+
+betas = np.linspace(-1.0, 1.0, 21)
+leakage_results = []
+
+for beta in betas:
+    psi = np.array([1, 0, 0], dtype=complex)
+    for i in range(steps):
+        H_t = H_static + (gauss_env[i] * X_op) + (beta * deriv_env[i] * Y_op)
+        psi = la.expm(-1j * H_t * dt) @ psi
+    leakage_results.append(np.abs(psi[2])**2)
+
+plt.plot(betas, leakage_results, 'o-')
+plt.show()
