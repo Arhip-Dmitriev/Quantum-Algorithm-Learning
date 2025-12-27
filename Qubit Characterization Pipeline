@@ -1,0 +1,87 @@
+import numpy as np
+import pandas as pd
+from qiskit_ibm_runtime.fake_provider import FakeManilaV2
+from qiskit_experiments.library import T1, T2Ramsey, StandardRB
+import matplotlib.pyplot as plt
+import warnings
+
+warnings.filterwarnings("ignore")
+
+backend = FakeManilaV2()
+qubit = 0 
+
+print(f"Starting Calibration Pipeline on {backend.name}, Qubit {qubit}...\n")
+
+t1_delays = np.linspace(1e-6, 300e-6, 40)
+exp_t1 = T1(physical_qubits=(qubit,), delays=t1_delays)
+data_t1 = exp_t1.run(backend).block_for_results()
+
+t2_delays = np.linspace(1e-6, 250e-6, 40)
+exp_t2 = T2Ramsey(physical_qubits=(qubit,), delays=t2_delays, osc_freq=1e5)
+data_t2 = exp_t2.run(backend).block_for_results()
+
+lengths = np.arange(1, 200, 30)
+exp_rb = StandardRB(physical_qubits=(qubit,), lengths=lengths, num_samples=10, seed=42)
+data_rb = exp_rb.run(backend).block_for_results()
+
+res_t1 = data_t1.analysis_results("T1").value.n
+res_t2 = data_t2.analysis_results("T2star").value.n
+res_epc = data_rb.analysis_results("EPC").value.n
+measured_fidelity = 1.0 - res_epc
+
+props = backend.properties(refresh=True)
+reported_t1 = props.t1(qubit)
+reported_t2 = props.t2(qubit)
+reported_error = props.gate_error("sx", (qubit,))
+reported_fidelity = 1.0 - reported_error
+
+df_health = pd.DataFrame({
+    "Metric": ["T1 (Relaxation)", "T2 (Dephasing)", "Gate Fidelity"],
+    "Measured Value": [f"{res_t1*1e6:.2f} µs", f"{res_t2*1e6:.2f} µs", f"{measured_fidelity:.4f}"],
+    "Backend Reported": [f"{reported_t1*1e6:.2f} µs", f"{reported_t2*1e6:.2f} µs", f"{reported_fidelity:.4f}"],
+    "Delta (%)": [
+        f"{abs(res_t1 - reported_t1)/reported_t1 * 100:.1f}%",
+        f"{abs(res_t2 - reported_t2)/reported_t2 * 100:.1f}%",
+        f"{abs(measured_fidelity - reported_fidelity)/reported_fidelity * 100:.2f}%"
+    ]
+})
+
+print("\n" + "="*40)
+print("   SYSTEM HEALTH REPORT: QUBIT 0")
+print("="*40)
+print(df_health.to_string(index=False))
+
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+
+t1_x, t1_y = [], []
+for datum in data_t1.data():
+    t1_x.append(datum['metadata']['xval'])
+    counts = datum.get('counts', {})
+    shots = sum(counts.values())
+    count_1 = sum(v for k, v in counts.items() if k.endswith("1"))
+    t1_y.append(count_1 / shots if shots > 0 else 0)
+
+plt.scatter(np.array(t1_x)*1e6, t1_y, color='blue', label='Measured Data')
+plt.title(rf"T1 Relaxation Study ($T_1$ = {res_t1*1e6:.2f} $\mu$s)")
+plt.xlabel(r"Delay ($\mu$s)")
+plt.ylabel(r"Population |1>")
+plt.grid(True, alpha=0.3)
+
+plt.subplot(1, 2, 2)
+rb_x, rb_y = [], []
+for datum in data_rb.data():
+    rb_x.append(datum['metadata']['xval'])
+    counts = datum.get('counts', {})
+    shots = sum(counts.values())
+    count_0 = sum(v for k, v in counts.items() if k.endswith("0"))
+    rb_y.append(count_0 / shots if shots > 0 else 0)
+
+plt.scatter(rb_x, rb_y, color='red', label='Clifford Seq')
+plt.title(f"Randomized Benchmarking (Fidelity = {measured_fidelity:.2%})")
+plt.xlabel("Clifford Length")
+plt.ylabel("Survival Probability (|0>)")
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
