@@ -1,0 +1,76 @@
+import numpy as np
+import stim
+import pymatching
+from qiskit_dynamics import Solver, Signal
+
+print("--- STEP 1: PHYSICAL SIMULATION (Qiskit Dynamics) ---")
+
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+Z = np.array([[1, 0], [0, -1]], dtype=complex)
+I = np.eye(2, dtype=complex)
+Sm = np.array([[0, 1], [0, 0]], dtype=complex)
+
+def kron(a, b): return np.kron(a, b)
+
+t1_q0, t1_q1 = 200.0, 50.0 
+dissipators = [np.sqrt(1/t1_q0)*kron(Sm, I), np.sqrt(1/t1_q1)*kron(I, Sm)]
+
+solver = Solver(
+    static_hamiltonian=np.zeros((4, 4)),
+    hamiltonian_operators=[kron(Z, X)], 
+    static_dissipators=dissipators
+)
+
+gate_time = 40.0 
+J = np.pi / (4 * gate_time) 
+sched = [Signal(J, carrier_freq=0.0)]
+
+y0 = np.zeros((4, 4), dtype=complex)
+y0[0, 0] = 1.0 
+
+result = solver.solve(
+    t_span=[0, gate_time],
+    y0=y0,
+    signals=sched,
+    method='RK23',
+    atol=1e-3, rtol=1e-3
+)
+
+rho_final = result.y[-1]
+psi_target = np.array([1, 0, 0, 0], dtype=complex) 
+fidelity = np.real(np.trace(rho_final @ np.outer(psi_target, psi_target)))
+physical_error_rate = 1.0 - fidelity
+
+print(f"Gate Time: {gate_time} ns")
+print(f"T1 Decay:  {t1_q1} ns (Qubit 1)")
+print(f"Calculated Physical Error Rate (p): {physical_error_rate:.5f}")
+
+print("\n--- STEP 2: LOGICAL SIMULATION (Stim + PyMatching) ---")
+
+code_distance = 5
+rounds = 100
+shots = 5000
+
+circuit = stim.Circuit.generated(
+    "repetition_code:memory",
+    distance=code_distance,
+    rounds=rounds,
+    after_clifford_depolarization=physical_error_rate
+)
+
+sampler = circuit.compile_detector_sampler()
+defects, actual_observables = sampler.sample(shots=shots, separate_observables=True)
+
+matcher = pymatching.Matching.from_stim_circuit(circuit)
+predicted_observables = matcher.decode_batch(defects)
+
+num_failures = np.sum(np.any(predicted_observables != actual_observables, axis=1))
+logical_error_rate = num_failures / shots
+
+print(f"Code: Distance-{code_distance} Repetition Code")
+print(f"Shots Simluated: {shots}")
+print(f"Logical Failures: {num_failures}")
+print(f"Logical Error Rate: {logical_error_rate:.5f}")
+
+improvement = physical_error_rate / logical_error_rate if logical_error_rate > 0 else 0
+print(f"Error Suppression Factor: {improvement:.1f}x")
