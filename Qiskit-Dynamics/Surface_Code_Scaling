@@ -1,0 +1,63 @@
+import stim
+import pymatching
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+
+def simulate_surface_code(distance, physical_error_rate, num_shots):
+    # FIXED: Only use arguments explicitly supported by your Stim version
+    circuit = stim.Circuit.generated(
+        "surface_code:rotated_memory_x",
+        distance=distance,
+        rounds=distance * 3,
+        after_clifford_depolarization=physical_error_rate,
+        after_reset_flip_probability=physical_error_rate,
+        before_measure_flip_probability=physical_error_rate,
+        before_round_data_depolarization=physical_error_rate 
+    )
+
+    sampler = circuit.compile_detector_sampler()
+    matcher = pymatching.Matching.from_stim_circuit(circuit)
+    
+    # Run batch simulation
+    defects, actual_observables = sampler.sample(shots=num_shots, separate_observables=True)
+    predicted_observables = matcher.decode_batch(defects)
+    
+    num_errors = np.sum(np.any(predicted_observables != actual_observables, axis=1))
+    return num_errors
+
+# --- Rest of the script remains the same ---
+distances = [3, 5, 7]
+physical_error_rates = np.linspace(0.001, 0.02, 10) 
+shots_per_point = 5000 
+
+print(f"--- QEC Threshold Simulation (Fixed) ---")
+# ... (rest of your loop and plotting code)
+results = {}
+t_start = time.time()
+
+for d in distances:
+    print(f"Simulating Distance d={d}...", end="", flush=True)
+    log_errors = []
+    for p in physical_error_rates:
+        num_fails = simulate_surface_code(d, p, shots_per_point)
+        logical_error_rate = num_fails / shots_per_point
+        log_errors.append(logical_error_rate)
+    results[d] = log_errors
+    print(f" Done. (Min P_log: {min(log_errors):.4f})")
+
+print(f"\nTotal Simulation Time: {time.time() - t_start:.2f}s")
+
+# Plotting
+plt.figure(figsize=(10, 7))
+colors = {3: '#e84393', 5: '#0984e3', 7: '#00b894'}
+for d in distances:
+    plt.loglog(physical_error_rates, results[d], label=f'Distance {d}', 
+               color=colors[d], marker='o')
+
+plt.title("Rotated Surface Code Threshold (Memory X)")
+plt.xlabel("Physical Error Rate (p)")
+plt.ylabel("Logical Error Rate (P_L)")
+plt.legend()
+plt.grid(True, which="both", alpha=0.4)
+plt.show()

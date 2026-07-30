@@ -1,0 +1,54 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from qiskit_dynamics import Solver, Signal
+
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+Z = np.array([[1, 0], [0, -1]], dtype=complex)
+I = np.eye(2, dtype=complex)
+Sm = np.array([[0, 1], [0, 0]], dtype=complex) 
+
+def q0(op): return np.kron(op, I)
+def q1(op): return np.kron(I, op)
+
+
+t1_q0, t1_q1 = 200.0, 50.0 # ns
+dissipators = [
+    np.sqrt(1/t1_q0) * q0(Sm), 
+    np.sqrt(1/t1_q1) * q1(Sm)
+]
+
+solver = Solver(
+    static_hamiltonian=np.zeros((4, 4)),
+    hamiltonian_operators=[q0(X), q0(Z) @ q1(X)],
+    static_dissipators=dissipators 
+)
+
+
+y0 = np.zeros((4, 4), dtype=complex)
+y0[0, 0] = 1.0 
+
+s_h = Signal(lambda t: np.pi/40 if t < 20 else 0)
+s_cx = Signal(lambda t: np.pi/80 if 20 <= t <= 60 else 0)
+
+print("Running Robust Qiskit Dynamics Solver (RK23)...")
+
+result = solver.solve(
+    t_span=[0, 60.0],
+    y0=y0,
+    signals=[s_h, s_cx],
+    method='RK23', 
+    atol=1e-3, 
+    rtol=1e-3
+)
+
+final_rho = result.y[-1] 
+probabilities = np.real(np.diag(final_rho))
+labels = ['|00>', '|01>', '|10>', '|11>']
+
+plt.figure(figsize=(8, 5))
+plt.bar(labels, probabilities, color='#e84393')
+plt.title("Noisy Bell State (RK23 Solver)")
+plt.ylabel("Population")
+plt.ylim(0, 1.0)
+plt.grid(axis='y', alpha=0.3)
+plt.show()

@@ -1,0 +1,49 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import qutip as qt
+
+omega = 2 * np.pi * 1.0   
+T1 = 10.0                 
+T2 = 5.0                  
+n_th = 0.5                
+
+gamma_relax = 1.0 / T1
+gamma_dephase = 1.0 / T2
+gamma_pure = gamma_dephase - (gamma_relax / 2.0)
+
+print(f"--- Simulating Open System Dynamics ---")
+print(f"Thermal Occupancy: {n_th}")
+
+H = 0.5 * omega * qt.sigmaz()
+
+c_ops = []
+rate_down = gamma_relax * (1 + n_th)
+c_ops.append(np.sqrt(rate_down) * qt.sigmam())
+
+rate_up = gamma_relax * n_th
+c_ops.append(np.sqrt(rate_up) * qt.sigmap())
+
+if gamma_pure > 0:
+    c_ops.append(np.sqrt(gamma_pure) * qt.sigmaz())
+
+psi0 = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+times = np.linspace(0, 40, 500)
+
+result = qt.mesolve(H, psi0, times, c_ops, [qt.sigmax(), qt.sigmay(), qt.sigmaz()])
+
+b = qt.Bloch()
+b.add_points([result.expect[0], result.expect[1], result.expect[2]], meth='l')
+b.vector_color = ['r']
+b.add_vectors([result.expect[0][-1], result.expect[1][-1], result.expect[2][-1]])
+b.show()
+
+plt.figure(figsize=(8, 5))
+plt.plot(times, (1 + result.expect[2])/2, label='Population in |1>')
+thermal_limit = n_th / (2*n_th + 1)
+plt.hlines(thermal_limit, times[0], times[-1], colors='r', linestyles='--', label='Thermal Equilibrium')
+plt.title("Relaxation to Thermal Equilibrium")
+plt.xlabel("Time")
+plt.ylabel("Excited State Population")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()

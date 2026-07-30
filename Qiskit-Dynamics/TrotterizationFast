@@ -1,0 +1,118 @@
+import numpy as np
+import scipy.linalg as la
+import matplotlib.pyplot as plt
+
+
+I = np.array([[1, 0], [0, 1]], dtype=complex)
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+Z = np.array([[1, 0], [0, -1]], dtype=complex)
+
+Sm = np.array([[0, 1], [0, 0]], dtype=complex) 
+
+
+def kron(A, B): return np.kron(A, B)
+
+
+T1_q0 = 200.0 
+T1_q1 = 50.0   
+dt = 0.5      
+
+
+gamma_0 = 1.0 / T1_q0
+gamma_1 = 1.0 / T1_q1
+
+
+
+def unitary_step(rho, H, dt):
+    """Evolve state perfectly under Hamiltonian H"""
+
+    U = la.expm(-1j * H * dt)
+    return U @ rho @ U.conj().T
+
+def noise_step(rho, dt):
+    """Apply Amplitude Damping (Relaxation) via Kraus Operators"""
+
+    p0 = gamma_0 * dt
+    K0_0 = np.sqrt(p0) * kron(Sm, I)
+    K0_1 = np.sqrt(1 - p0) * kron(Sm.T@Sm, I) + kron(I@I - Sm.T@Sm, I)
+
+    M0_0 = np.array([[1, 0], [0, np.sqrt(1-p0)]]) 
+    M0_1 = np.array([[0, np.sqrt(p0)], [0, 0]])   
+
+    K0_no = kron(M0_0, I); K0_yes = kron(M0_1, I)
+    
+
+    p1 = gamma_1 * dt
+    M1_0 = np.array([[1, 0], [0, np.sqrt(1-p1)]])
+    M1_1 = np.array([[0, np.sqrt(p1)], [0, 0]])
+    K1_no = kron(I, M1_0); K1_yes = kron(I, M1_1)
+    
+
+    rho = K0_no @ rho @ K0_no.conj().T + K0_yes @ rho @ K0_yes.conj().T
+
+    rho = K1_no @ rho @ K1_no.conj().T + K1_yes @ rho @ K1_yes.conj().T
+    
+
+    return rho / np.trace(rho)
+
+
+
+psi_ideal = np.array([1, 0, 0, 0], dtype=complex)
+rho_ideal = np.outer(psi_ideal, psi_ideal)
+rho_noisy = rho_ideal.copy()
+
+total_time = 60.0
+steps = int(total_time / dt)
+times = np.linspace(0, total_time, steps)
+fidelities = []
+
+print(f"Simulating Bell Prep (Ideal vs. T1 Decay)...")
+
+for t in times:
+
+    H_t = np.zeros((4,4), dtype=complex)
+    
+    if t < 20.0:
+
+        omega = np.pi / (2 * 20.0)
+        H_t = omega * kron(X, I)
+        
+    elif 20.0 <= t < 60.0:
+
+        J = np.pi / (4 * 40.0)
+        H_t = J * kron(Z, X) 
+
+    rho_ideal = unitary_step(rho_ideal, H_t, dt)
+
+
+    rho_prime = unitary_step(rho_noisy, H_t, dt) 
+    rho_noisy = noise_step(rho_prime, dt)       
+    fid = np.real(np.trace(rho_ideal @ rho_noisy))
+    fidelities.append(fid)
+
+
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(times, fidelities, 'r-', linewidth=2, label='Fidelity')
+plt.axvline(20, color='k', linestyle='--', alpha=0.3, label='Hadamard Done')
+plt.axvline(60, color='k', linestyle='--', alpha=0.3, label='CNOT Done')
+plt.xlabel("Time (ns)")
+plt.ylabel("State Fidelity")
+plt.title("Impact of T1 Noise on Bell State")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.subplot(1, 2, 2)
+pops_ideal = np.real(np.diag(rho_ideal))
+pops_noisy = np.real(np.diag(rho_noisy))
+labels = ['|00>', '|01>', '|10>', '|11>']
+x = np.arange(4)
+width = 0.35
+
+plt.bar(x - width/2, pops_ideal, width, label='Ideal', color='#74b9ff')
+plt.bar(x + width/2, pops_noisy, width, label='Noisy (IBM)', color='#ff7675')
+plt.xticks(x, labels)
+plt.title("Final State Populations")
+plt.legend()
+
+plt.tight_layout()
+plt.show()

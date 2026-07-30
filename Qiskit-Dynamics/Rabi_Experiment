@@ -1,0 +1,50 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import warnings
+from qiskit_dynamics import Solver, Signal
+
+warnings.filterwarnings("ignore")
+
+qubit_frequency = 5.0e9
+drive_strength = 0.02e9
+
+operators = {
+    'z': 2 * np.pi * qubit_frequency * np.array([[0, 0], [0, 1]]),
+    'x': 2 * np.pi * drive_strength * np.array([[0, 1], [1, 0]])
+}
+
+static_hamiltonian = operators['z']
+drive_operator = operators['x']
+
+solver = Solver(
+    static_hamiltonian=static_hamiltonian,
+    hamiltonian_operators=[drive_operator],
+    rotating_frame=static_hamiltonian
+)
+
+amplitudes = np.linspace(0, 1.0, 50)
+p_ones = []
+duration = 128e-9
+
+for amp in amplitudes:
+    sig = Signal(
+        envelope=lambda t: amp if (0 <= t <= duration) else 0,
+        carrier_freq=qubit_frequency
+    )
+    
+    result = solver.solve(
+        t_span=[0, duration],
+        y0=np.array([1, 0], dtype=complex),
+        signals=[sig]
+    )
+    
+    final_state = result.y[-1]
+    p_ones.append(np.abs(final_state[1])**2)
+
+plt.figure(figsize=(8, 5))
+plt.plot(amplitudes, p_ones, 'o-', color='#648fff')
+plt.title("Rabi Experiment")
+plt.xlabel("Amplitude")
+plt.ylabel("P(|1>)")
+plt.grid(True)
+plt.show()
