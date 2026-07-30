@@ -1,0 +1,113 @@
+import numpy as np
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import UnitaryGate
+from qiskit_aer import AerSimulator
+from qiskit_aer.primitives import SamplerV2
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit.quantum_info import Statevector
+import math
+
+
+print(" :::: Arkhip Dmitriev's QPE :::: ")
+print()
+print("This is a simulation of the quantum algorithm known as QPE using Qiskit")
+print()
+print("It requires a unitary operator (gate) and one of its eigenvectors (eigenstates)")
+print()
+print("Please provide unitary gate U as a matrix. This program will return the phase 'f' where U|a> = e^{2*i*(pi)*f}|a>")
+print("Note that the matrix must be a valid quantum gate for the program to work")
+print()
+
+rows = int(input("How many rows does the matrix have? "))
+arr_2d = []
+
+for i in range(rows):
+    row_input = input(f"Please provide Row №{i+1} (space-separated): ")
+    row = [float(x) for x in row_input.split()]
+    arr_2d.append(row)
+
+arr = np.array(arr_2d)
+print(f"Your gate:\n{arr}")
+
+tqubits = int(math.log2(rows))
+estate = input("Please provide an eigenstate of this operator to estimate the phase on in the form of a comma separated vector: ")
+vector = [complex(x.strip()) for x in estate.split(",")]
+state = Statevector(vector)
+
+print()
+t = int(input("How many 'simulated' qubits would you like to run this code using? Note that your result will be precise to the nearest (1/2)^t, where t is the number of qubits: "))
+print("Beginning QPE | Setting up circuit")
+ugate = UnitaryGate(arr, label="U")
+
+qc = QuantumCircuit(t + 1 + tqubits, t + 1)
+
+print("Initializing target register")
+target_qubits = list(range(t + 1, t + 1 + tqubits))
+qc.initialize(state, target_qubits)
+
+print("Placing estimation qubits in superposition:")
+for i in range(t + 1):
+    qc.h(i)
+    print(f"Qubit №{i} is in superposition")
+
+print("Applying U to target qubit:")
+for i in range(t + 1):
+    print(f"Applying U^{2**i} controlled by qubit №{i}")
+    qc.append(ugate.power(2**i).control(1), [i] + target_qubits)
+    print(f"Applied U for control qubit №{i}")
+
+print("Applying Inverse QFT:")
+for i in range(t, -1, -1):
+    print(f"Starting control group №{i}:")
+    print(f"Hadamarding qubit №{i}")
+    qc.h(i)
+    if i == 0:
+        break
+    k = 2
+    for j in range(i - 1, -1, -1):
+        ang = (-2 * np.pi) / (2 ** k)
+        print(f"Applying correction of {ang} to qubit №{j}")
+        qc.cp(ang, i, j)
+        k += 1
+    print(f"Control group №{i} is complete")
+
+print("Adding measurements to counting qubits...")
+qc.measure(range(t + 1), range(t + 1))
+
+print(qc.draw())
+print("Set up complete | Now simulating circuit")
+shot = int(input("How many runs would you like? (1=4/10 accuracy, 5=9/10 accuracy, 10= >99/100 accuracy): "))
+print("Running Simulation Now...")
+
+backend = AerSimulator()
+pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+isa_circuit = pm.run(qc)
+
+sampler = SamplerV2()
+
+job = sampler.run([isa_circuit], shots=shot)
+result = job.result()[0]
+
+data_bin = result.data
+register_name = list(data_bin.keys())[0]
+counts = data_bin[register_name].get_counts()
+
+print()
+print("=== DEBUGGING OUTPUT ===")
+print(f"All measurement results: {counts}")
+print()
+
+most_common_binary = max(counts, key=counts.get)
+print(f"Most common bitstring (raw): {most_common_binary}")
+print(f"  (Qiskit format: rightmost bit = qubit 0, leftmost bit = qubit {t})")
+
+# Reverse the bit string (Qiskit uses little-endian)
+reversed_binary = most_common_binary[::-1]
+print(f"Reversed bitstring: {reversed_binary}")
+
+
+result_int = int(reversed_binary, 2)
+
+
+phase = result_int / (2 ** (t + 1))
+print(f"The phase impact of your operator is {phase}")
