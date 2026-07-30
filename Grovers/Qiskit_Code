@@ -1,0 +1,107 @@
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import ZGate
+from qiskit_aer import AerSimulator
+from qiskit_aer.primitives import SamplerV2
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+
+
+print()
+print()
+print("This is guess the number I'm thinking of but with a quantum computer (simulated)")
+print("Technically, you might call it a practical simulation of Grover's Algorithm")
+print("An odd version of Grover's, that is  [95% Accuracy]")
+print()
+
+key = bin(int(input("Please tell me your secret number (0-127)")))[2:].zfill(7)
+
+qc = QuantumCircuit(9,7)
+
+
+
+print()
+print("Initializing Data Qubits")
+qc.h(range(7))
+
+print()
+print ("Initializing Ancilla")
+
+qc.h(7)
+qc.x(7)
+
+
+counter=0
+while counter<1:
+
+
+    print("Defining oracle using X-Gates on 0's")
+
+    for i, bit in enumerate(reversed(key)):
+        if bit == '0':
+            qc.x(i)
+
+
+    print()
+    print("Building Oracle")
+
+    qc.h(7)
+    qc.mcx(list(range(7)), 7)
+    qc.h(7)
+
+    print()
+    print("Add X-Gates to undo previous ones")
+
+    for i, bit in enumerate(reversed(key)):
+        if bit == '0':
+            qc.x(i)
+
+    print()
+    print("Building Diffuser")
+
+    qc.h(range(7))
+    qc.x(range(7))
+
+
+    qc.mcx(list(range(7)), 8)
+
+
+
+
+
+    for target in range(7):  # q0 through q6
+        qc.cz(8, target)
+    
+    qc.x(range(7))
+    qc.h(range(7))
+
+    qc.reset(8)
+
+    print()
+    print()
+    print()
+    print()
+    print()
+
+    counter = counter+1
+    if counter==1:
+        print(qc.draw())
+
+print(qc.draw())
+qc.measure(range(7), range(7))
+
+aer_sim = AerSimulator()
+pm = generate_preset_pass_manager(backend=aer_sim, optimization_level=1)
+isa_circuit = pm.run(qc)
+
+
+sampler = SamplerV2()
+result = sampler.run([isa_circuit], shots=2000).result()
+
+pub_result = result[0]
+counts = pub_result.data.c.get_counts()
+bitstring = max(counts, key=counts.get)
+
+detected_number = int(bitstring, 2)
+
+print()
+print(f"The Quantum Computer thinks your number is: {detected_number}")
