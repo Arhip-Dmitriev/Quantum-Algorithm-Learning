@@ -1,0 +1,91 @@
+import numpy as np
+import warnings
+from scipy.optimize import minimize
+from qiskit import QuantumCircuit, pulse
+from qiskit.circuit import ParameterVector
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.pulse import GaussianSquare, Gaussian
+from qiskit_ibm_runtime.fake_provider import FakeManilaV2
+from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+backend = FakeManilaV2()
+
+def create_max_cut_hamiltonian(edges, num_qubits):
+    pauli_list = []
+    for i, j in edges:
+        p_string = ["I"] * num_qubits
+        p_string[num_qubits - 1 - i] = "Z"
+        p_string[num_qubits - 1 - j] = "Z"
+        pauli_list.append(("".join(p_string), 1.0))
+    return SparsePauliOp.from_list(pauli_list)
+
+def build_fully_pulsed_qaoa(num_qubits, edges, p, backend):
+    circuit = QuantumCircuit(num_qubits)
+    gamma = ParameterVector("gamma", p)
+    beta = ParameterVector("beta", p)
+    
+    circuit.h(range(num_qubits))
+    
+    for layer in range(p):
+        for i, j in edges:
+            theta = 2 * gamma[layer]
+            
+            with pulse.build(backend, name=f"rzz_pulse_{i}_{j}") as rzz_sched:
+                try:
+                    cr_chan = pulse.control_channels(i, j)[0]
+                except:
+                    cr_chan = pulse.drive_channel(i) 
+                drive_chan_i = pulse.drive_channel(i)
+                
+                duration, amp, sigma = 512, 0.2, 64
+                width = duration - 4 * sigma
+                
+                pulse.play(GaussianSquare(duration=duration, amp=amp, sigma=sigma, width=width), cr_chan)
+                pulse.play(Gaussian(duration=160, amp=0.1, sigma=40), drive_chan_i)
+                pulse.play(GaussianSquare(duration=duration, amp=-amp, sigma=sigma, width=width), cr_chan)
+                pulse.play(Gaussian(duration=160, amp=0.1, sigma=40), drive_chan_i)
+
+            circuit.rzz(theta, i, j)
+            circuit.add_calibration('rzz', [i, j], rzz_sched, [theta])
+
+        for i in range(num_qubits):
+            theta = 2 * beta[layer]
+            with pulse.build(backend, name=f"rx_pulse_{i}") as rx_sched:
+                drive_chan = pulse.drive_channel(i)
+                pulse.play(Gaussian(duration=160, amp=0.1, sigma=40), drive_chan)
+            
+            circuit.rx(theta, i)
+            circuit.add_calibration('rx', [i], rx_sched, [theta])
+            
+    return circuit, gamma, beta
+
+num_qubits = 4
+edges = [(0, 1), (1, 2), (2, 3)] 
+p_layers = 1
+
+hamiltonian = create_max_cut_hamiltonian(edges, num_qubits)
+qaoa_circuit, gamma_params, beta_params = build_fully_pulsed_qaoa(num_qubits, edges, p_layers, backend)
+
+estimator = BackendEstimatorV2(backend=backend)
+sampler = BackendSamplerV2(backend=backend)
+
+def cost_function(params):
+    pub = (qaoa_circuit, hamiltonian, [params])
+    job = estimator.run([pub])
+    result = job.result()[0]
+    energy = result.data.evs[0]
+    print(f"Current Energy: {energy:.4f}")
+    return energy
+
+initial_params = np.random.rand(2 * p_layers)
+res = minimize(cost_function, initial_params, method='COBYLA', options={'maxiter': 5})
+
+print("-" * 30)
+qaoa_circuit.measure_all()
+final_pub = (qaoa_circuit, [res.x])
+job = sampler.run([final_pub])
+result = job.result()[0]
+counts = result.data.meas.get_counts()
+print(f"Most likely solution: {max(counts, key=counts.get)}")

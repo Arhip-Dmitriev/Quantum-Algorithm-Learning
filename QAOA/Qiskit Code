@@ -1,0 +1,68 @@
+import numpy as np
+from qiskit import QuantumCircuit
+from qiskit.circuit import ParameterVector
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.primitives import StatevectorEstimator, StatevectorSampler
+from scipy.optimize import minimize
+
+def create_max_cut_hamiltonian(edges, num_qubits):
+    pauli_list = []
+    for i, j in edges:
+        p_string = ["I"] * num_qubits
+        p_string[num_qubits - 1 - i] = "Z"
+        p_string[num_qubits - 1 - j] = "Z"
+        pauli_list.append(("".join(p_string), 1.0))
+    return SparsePauliOp.from_list(pauli_list)
+
+def build_qaoa_circuit(num_qubits, edges, p):
+    circuit = QuantumCircuit(num_qubits)
+    gamma = ParameterVector("gamma", p)
+    beta = ParameterVector("beta", p)
+    
+    circuit.h(range(num_qubits))
+    
+    for layer in range(p):
+        for i, j in edges:
+            circuit.rzz(2 * gamma[layer], i, j)
+        for i in range(num_qubits):
+            circuit.rx(2 * beta[layer], i)
+            
+    return circuit, gamma, beta
+
+num_qubits = 4
+edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+p_layers = 1
+
+hamiltonian = create_max_cut_hamiltonian(edges, num_qubits)
+qaoa_circuit, gamma_params, beta_params = build_qaoa_circuit(num_qubits, edges, p_layers)
+estimator = StatevectorEstimator()
+
+def cost_function(params):
+    gammas = params[:p_layers]
+    betas = params[p_layers:]
+    
+    param_dict = dict(zip(gamma_params[:] + beta_params[:], gammas.tolist() + betas.tolist()))
+    
+    observable = hamiltonian
+    pub = (qaoa_circuit, observable, list(param_dict.values()))
+    
+    job = estimator.run([pub])
+    result = job.result()[0]
+    return result.data.evs
+
+initial_params = np.random.rand(2 * p_layers)
+result = minimize(cost_function, initial_params, method='COBYLA')
+
+print(f"Optimal Parameters: {result.x}")
+
+qaoa_circuit.measure_all()
+
+sampler = StatevectorSampler()
+optimal_params = dict(zip(gamma_params[:] + beta_params[:], result.x[:p_layers].tolist() + result.x[p_layers:].tolist()))
+pub = (qaoa_circuit, list(optimal_params.values()))
+job = sampler.run([pub])
+result = job.result()[0]
+counts = result.data.meas.get_counts()
+
+sorted_counts = dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+print(f"Most likely solution: {list(sorted_counts.keys())[0]}")
